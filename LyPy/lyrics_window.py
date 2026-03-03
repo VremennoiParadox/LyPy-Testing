@@ -329,7 +329,7 @@ class LyricsWindow(QMainWindow):
 
     # ── Window flags ─────────────────────────────────────────────
     def _init_window(self):
-        self.setWindowTitle("Spotify Lyrics")
+        self.setWindowTitle("LyPy Lyrics")
         self.resize(self.config["window_width"], self.config["window_height"])
         self.setMinimumSize(280, 360)
 
@@ -521,6 +521,14 @@ class LyricsWindow(QMainWindow):
                 self._render_idle()
             return
 
+        if playback.get("conflict"):
+            self.current_track_key = "__multi_app_conflict__"
+            self.current_lyrics = None
+            self.current_line_index = -1
+            self._set_gradient(DEFAULT_GRADIENT)
+            self._render_conflict(playback.get("playing_apps", []))
+            return
+
         if playback["track_key"] != self.current_track_key:
             self.current_track_key = playback["track_key"]
             self.current_line_index = -1
@@ -576,11 +584,24 @@ class LyricsWindow(QMainWindow):
     # ── Idle state ───────────────────────────────────────────────
     def _render_idle(self):
         self._clear_labels()
-        idle = WordWrapLabel("Play something on Spotify\u2026")
+        idle = WordWrapLabel("Play something\u2026")
         idle.setStyleSheet(self._css_inactive())
         idle.setAlignment(Qt.AlignLeft)
         self.lyrics_layout.addWidget(idle)
         self.lyric_labels.append(idle)
+
+    def _render_conflict(self, apps: list[str]):
+        self._clear_labels()
+        apps_text = ", ".join(apps) if apps else "multiple apps"
+        warning = WordWrapLabel(
+            "Multiple media apps are playing at the same time "
+            f"({apps_text}).\n\n"
+            "To avoid sync bugs, please play music in only one app."
+        )
+        warning.setStyleSheet(self._css_inactive())
+        warning.setAlignment(Qt.AlignLeft)
+        self.lyrics_layout.addWidget(warning)
+        self.lyric_labels.append(warning)
 
     # ── Lyrics rendering ─────────────────────────────────────────
     def _render_lyrics(self):

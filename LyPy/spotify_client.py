@@ -25,6 +25,31 @@ class MediaSession:
         self._manager = None
         self._thumb_cache: dict[str, bytes | None] = {}  # track_key → bytes
 
+    @staticmethod
+    def _app_display_name(app_id: str) -> str:
+        app = (app_id or "").lower()
+        if "spotify" in app:
+            return "Spotify"
+        if "youtube" in app or "ytmusic" in app:
+            return "YouTube Music"
+        if "applemusic" in app or "apple music" in app or "itunes" in app:
+            return "Apple Music"
+        if "amazon music" in app or "amazonmusic" in app or "amzn" in app:
+            return "Amazon Music"
+        if "tidal" in app:
+            return "Tidal"
+        if "deezer" in app:
+            return "Deezer"
+        if "yandex" in app or "yandexmusic" in app:
+            return "Yandex Music"
+        if "msedge" in app:
+            return "Microsoft Edge"
+        if "chrome" in app:
+            return "Google Chrome"
+        if "firefox" in app:
+            return "Mozilla Firefox"
+        return app_id or "Unknown"
+
     # ── async internals ──────────────────────────────────────────
     async def _ensure_manager(self):
         if self._manager is None:
@@ -52,7 +77,29 @@ class MediaSession:
 
     async def _get_playback(self) -> dict | None:
         manager = await self._ensure_manager()
+        sessions = list(manager.get_sessions())
+        playing_sessions = []
+        playing_apps = []
+        for s in sessions:
+            try:
+                pb_info = s.get_playback_info()
+                if pb_info.playback_status == PlaybackStatus.PLAYING:
+                    playing_sessions.append(s)
+                    app_id = s.source_app_user_model_id
+                    playing_apps.append(self._app_display_name(app_id))
+            except Exception:
+                continue
+
+        if len(playing_sessions) > 1:
+            unique_apps = list(dict.fromkeys(playing_apps))
+            return {
+                "conflict": True,
+                "playing_apps": unique_apps,
+            }
+
         session = manager.get_current_session()
+        if not session and len(playing_sessions) == 1:
+            session = playing_sessions[0]
         if not session:
             return None
 
@@ -66,6 +113,7 @@ class MediaSession:
 
         title = info.title or ""
         artist = info.artist or ""
+        source_app = self._app_display_name(session.source_app_user_model_id)
 
         if not title:
             return None
@@ -98,6 +146,7 @@ class MediaSession:
             pass  # fall back to raw position
 
         return {
+            "conflict": False,
             "track_key": track_key,
             "track_name": title,
             "artist": artist,
@@ -105,6 +154,7 @@ class MediaSession:
             "duration_ms": duration_ms,
             "progress_ms": progress_ms,
             "is_playing": is_playing,
+            "source_app": source_app,
         }
 
     # ── public (sync) API ────────────────────────────────────────

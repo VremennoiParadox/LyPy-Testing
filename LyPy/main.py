@@ -17,7 +17,7 @@ from lyrics_window import LyricsWindow
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Spotify Lyrics")
+    app.setApplicationName("LyPy Lyrics")
 
     # Dark application style
     app.setStyle("Fusion")
