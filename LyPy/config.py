@@ -19,6 +19,8 @@ DEFAULT_CONFIG = {
     # ── Appearance (Spotify-matched) ──
     "font_size": 28,
     "font_family": "Segoe UI, Circular, Helvetica, Arial, sans-serif",
+    "bg_saturation": 80,       # 0-100 slider for background color saturation
+    "line_spacing": 3,         # 0-10 gap between lyric lines
 
     # ── Behaviour ──
     "polling_interval_ms": 50,

@@ -11,13 +11,16 @@ from ctypes import wintypes
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QScrollArea, QPushButton, QApplication, QSizePolicy,
+    QSlider, QComboBox, QGroupBox, QFormLayout,
 )
 from PyQt5.QtCore import (
     Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal, QRect, QPoint,
 )
 from PyQt5.QtGui import (
     QColor, QPalette, QLinearGradient, QPainter, QBrush, QPainterPath, QCursor,
+    QFont, QFontDatabase, QDesktopServices,
 )
+from PyQt5.QtCore import QUrl
 
 try:
     from PIL import Image
@@ -26,7 +29,7 @@ except ImportError:
     _HAS_PIL = False
 
 
-DEFAULT_GRADIENT = ("#121212", "#1a1a2e", "#16213e")
+DEFAULT_GRADIENT = ("#1a1a2e", "#141425", "#0e0e1a")
 CORNER_RADIUS = 16
 EDGE_MARGIN = 6           # pixels from edge that trigger resize
 
@@ -72,42 +75,47 @@ def _dominant_color_from_bytes(image_bytes: bytes) -> tuple[int, int, int] | Non
         return None
 
 
-def _gradient_from_rgb(r: int, g: int, b: int) -> tuple[str, str, str]:
+def _gradient_from_rgb(r: int, g: int, b: int, saturation_pct: int = 80) -> tuple[str, str, str]:
     """
     Build a 3-stop Spotify-style gradient from a single dominant colour.
-    Top   = the colour itself (muted/darkened)
-    Mid   = slightly darker
-    Bottom = darkest
+    saturation_pct (0-100) controls how vivid the background is.
     """
     h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-    # Ensure enough saturation so it's not grey
-    s = max(s, 0.30)
-    # Ensure enough brightness so the gradient is visible
-    v = max(v, 0.45)
+    # Exponential curve: lower slider values desaturate much more aggressively
+    sat_factor = (saturation_pct / 100.0) ** 0.5   # sqrt curve
+    s = s * sat_factor
+    s = max(s, 0.05)  # tiny floor so it's never pure grey
+    v = max(v, 0.55)
 
     def _to_hex(h_, s_, v_):
         cr, cg, cb = colorsys.hsv_to_rgb(h_, s_, v_)
         return f"#{int(cr*255):02x}{int(cg*255):02x}{int(cb*255):02x}"
 
-    top    = _to_hex(h, s * 0.75, v * 0.55)   # rich dark
-    mid    = _to_hex(h, s * 0.65, v * 0.35)   # darker
-    bottom = _to_hex(h, s * 0.55, v * 0.18)   # near-black
+    top    = _to_hex(h, s * 0.90, v * 0.70)
+    mid    = _to_hex(h, s * 0.80, v * 0.45)
+    bottom = _to_hex(h, s * 0.65, v * 0.22)
     return (top, mid, bottom)
 
 
 # ─── Rounded-corner gradient widget ─────────────────────────────────────
 
 class RoundedGradientWidget(QWidget):
-    """Paints a rounded-rectangle gradient background."""
+    """Paints a rounded-rectangle gradient background with optional dim overlay."""
 
     def __init__(self, parent=None, radius=CORNER_RADIUS):
         super().__init__(parent)
         self._colors = DEFAULT_GRADIENT
         self._radius = radius
+        self._dim = 0          # 0-255 overlay darkness (0 = off)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
     def set_gradient(self, colors: tuple[str, str, str]):
         self._colors = colors
+        self.update()
+
+    def set_dim(self, alpha: int):
+        """Set overlay darkness (0 = normal, ~160 = translucent settings look)."""
+        self._dim = max(0, min(255, alpha))
         self.update()
 
     def paintEvent(self, event):
@@ -121,6 +129,8 @@ class RoundedGradientWidget(QWidget):
         grad.setColorAt(0.5, QColor(self._colors[1]))
         grad.setColorAt(1.0, QColor(self._colors[2]))
         p.fillPath(path, QBrush(grad))
+        if self._dim > 0:
+            p.fillPath(path, QBrush(QColor(0, 0, 0, self._dim)))
         p.end()
 
 
@@ -295,6 +305,251 @@ class WordWrapLabel(QLabel):
         return super().sizeHint()
 
 
+# ─── Inline settings panel ───────────────────────────────────────────────
+
+_PANEL_SS = """
+QWidget#settingsPanel {
+    background: transparent;
+}
+
+/* ── Section headers ── */
+QLabel#sectionTitle {
+    color: rgba(255,255,255,0.50);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    padding: 12px 0 4px 2px;
+    background: transparent;
+}
+
+/* ── Setting rows ── */
+QWidget#settingRow {
+    background: rgba(255,255,255,0.04);
+    border-radius: 10px;
+    padding: 0px;
+}
+QWidget#settingRow QLabel {
+    color: rgba(255,255,255,0.90);
+    font-size: 13px;
+    background: transparent;
+}
+QWidget#settingRow QLabel#valueLabel {
+    color: #1db954;
+    font-weight: 600;
+    font-size: 13px;
+    min-width: 36px;
+}
+
+/* ── Sliders ── */
+QSlider::groove:horizontal {
+    height: 4px;
+    background: rgba(255,255,255,0.10);
+    border-radius: 2px;
+}
+QSlider::handle:horizontal {
+    background: #1db954;
+    border: none;
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+QSlider::sub-page:horizontal {
+    background: #1db954;
+    border-radius: 2px;
+}
+
+/* ── Buttons ── */
+QPushButton#saveBtn {
+    background: #1db954;
+    color: #000;
+    border: none;
+    border-radius: 20px;
+    padding: 10px 40px;
+    font-size: 14px;
+    font-weight: 700;
+}
+QPushButton#saveBtn:hover { background: #1ed760; }
+QPushButton#backBtn {
+    background: transparent;
+    color: rgba(255,255,255,0.65);
+    border: none;
+    font-size: 22px;
+    padding: 0;
+}
+QPushButton#backBtn:hover { color: #fff; }
+QPushButton#bugBtn {
+    background: rgba(255,255,255,0.06);
+    border: none;
+    border-radius: 20px;
+    color: rgba(255,255,255,0.55);
+    padding: 8px 20px;
+    font-size: 12px;
+}
+QPushButton#bugBtn:hover {
+    background: rgba(255,255,255,0.10);
+    color: #fff;
+}
+QPushButton#resetBtn {
+    background: rgba(255,255,255,0.06);
+    border: none;
+    border-radius: 20px;
+    color: rgba(255,100,100,0.65);
+    padding: 8px 20px;
+    font-size: 12px;
+}
+QPushButton#resetBtn:hover {
+    background: rgba(255,60,60,0.12);
+    color: #ff6666;
+}
+"""
+
+
+class SettingsPanel(QWidget):
+    """Inline settings panel that replaces lyrics content when open."""
+    closed = pyqtSignal()
+    saved  = pyqtSignal()
+
+    def __init__(self, config: dict, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.setObjectName("settingsPanel")
+        self.setStyleSheet(_PANEL_SS)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(20, 4, 20, 16)
+        root.setSpacing(0)
+
+        # ── Back button ───────────────────────────────────────────
+        top_row = QHBoxLayout()
+        self.back_btn = QPushButton("\u2190")
+        self.back_btn.setObjectName("backBtn")
+        self.back_btn.setFixedSize(32, 32)
+        self.back_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.back_btn.clicked.connect(self._on_back)
+        top_row.addWidget(self.back_btn)
+        top_row.addStretch()
+        root.addLayout(top_row)
+
+        # ── TEXT section ──────────────────────────────────────────
+        root.addWidget(self._section_title("TEXT"))
+        root.addWidget(self._slider_row(
+            "Font size", 14, 48, config["font_size"], "px", "size"))
+        root.addSpacing(4)
+        root.addWidget(self._slider_row(
+            "Line spacing", 0, 10, config.get("line_spacing", 3), "px", "spacing"))
+
+        # ── BACKGROUND section ────────────────────────────────────
+        root.addWidget(self._section_title("BACKGROUND"))
+        root.addWidget(self._slider_row(
+            "Color saturation", 0, 100, config.get("bg_saturation", 80), "%", "sat"))
+
+        root.addSpacing(16)
+
+        # ── Action buttons ────────────────────────────────────────
+        action_row = QHBoxLayout()
+        action_row.setSpacing(8)
+
+        self.bug_btn = QPushButton("\U0001f41b  Report a bug")
+        self.bug_btn.setObjectName("bugBtn")
+        self.bug_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.bug_btn.clicked.connect(self._open_bug_report)
+        action_row.addWidget(self.bug_btn)
+
+        self.reset_btn = QPushButton("\u21bb  Reset")
+        self.reset_btn.setObjectName("resetBtn")
+        self.reset_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.reset_btn.clicked.connect(self._on_reset)
+        action_row.addWidget(self.reset_btn)
+
+        root.addLayout(action_row)
+
+        root.addStretch()
+
+        # ── Save button ──────────────────────────────────────────
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        self.save_btn = QPushButton("Save")
+        self.save_btn.setObjectName("saveBtn")
+        self.save_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        self.save_btn.clicked.connect(self._on_save)
+        btn_row.addWidget(self.save_btn)
+        btn_row.addStretch()
+        root.addLayout(btn_row)
+
+    # ── Helpers to build consistent setting rows ─────────────────
+    def _section_title(self, text: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setObjectName("sectionTitle")
+        return lbl
+
+    def _slider_row(self, label: str, lo: int, hi: int,
+                    value: int, suffix: str, attr: str) -> QWidget:
+        """Build a styled row: label ... slider ... value."""
+        row = QWidget()
+        row.setObjectName("settingRow")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(14, 10, 14, 10)
+        h.setSpacing(12)
+
+        name_lbl = QLabel(label)
+        h.addWidget(name_lbl)
+
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(lo, hi)
+        slider.setValue(value)
+        h.addWidget(slider, 1)
+
+        val_lbl = QLabel(f"{value}{suffix}")
+        val_lbl.setObjectName("valueLabel")
+        val_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        slider.valueChanged.connect(
+            lambda v, l=val_lbl, s=suffix: l.setText(f"{v}{s}"))
+        h.addWidget(val_lbl)
+
+        # Store references for save/sync
+        setattr(self, f"_{attr}_slider", slider)
+        setattr(self, f"_{attr}_label", val_lbl)
+        return row
+
+    def _open_bug_report(self):
+        QDesktopServices.openUrl(
+            QUrl("https://github.com/YOUR_REPO/LyPy/issues"))
+
+    def _on_back(self):
+        self.closed.emit()
+
+    def _on_save(self):
+        self.config["font_size"] = self._size_slider.value()
+        self.config["line_spacing"] = self._spacing_slider.value()
+        self.config["bg_saturation"] = self._sat_slider.value()
+        from config import save_config
+        save_config(self.config)
+        self.saved.emit()
+        self.closed.emit()
+
+    def _on_reset(self):
+        """Reset all settings to defaults."""
+        from config import DEFAULT_CONFIG, save_config
+        for key, val in DEFAULT_CONFIG.items():
+            self.config[key] = val
+        save_config(self.config)
+        self.sync_from_config()
+        self.saved.emit()
+
+    def sync_from_config(self):
+        """Re-read config values into widgets (call before showing)."""
+        self._size_slider.setValue(self.config["font_size"])
+        self._size_label.setText(f"{self.config['font_size']}px")
+        sp = self.config.get("line_spacing", 3)
+        self._spacing_slider.setValue(sp)
+        self._spacing_label.setText(f"{sp}px")
+        sat = self.config.get("bg_saturation", 80)
+        self._sat_slider.setValue(sat)
+        self._sat_label.setText(f"{sat}%")
+
+
 # ─── Main lyrics window ─────────────────────────────────────────────────
 
 class LyricsWindow(QMainWindow):
@@ -388,6 +643,7 @@ class LyricsWindow(QMainWindow):
         self.title_bar.close_clicked.connect(self._quit)
         self.title_bar.minimise_clicked.connect(self.showMinimized)
         self.title_bar.pin_toggled.connect(self._on_pin_toggled)
+        self.title_bar.settings_clicked.connect(self._open_settings)
         root.addWidget(self.title_bar)
 
         # Scrollable lyrics area
@@ -404,12 +660,20 @@ class LyricsWindow(QMainWindow):
         self.lyrics_container.setStyleSheet("background: transparent;")
         self.lyrics_layout = QVBoxLayout(self.lyrics_container)
         self.lyrics_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        self.lyrics_layout.setSpacing(4)
+        self.lyrics_layout.setSpacing(self.config.get("line_spacing", 3))
         self.lyrics_layout.setContentsMargins(24, 20, 24, 250)
         self.scroll_area.setWidget(self.lyrics_container)
 
         root.addWidget(self.scroll_area)
         self.lyric_labels: list[QLabel] = []
+
+        # Inline settings panel (hidden by default)
+        self.settings_panel = SettingsPanel(self.config, self)
+        self.settings_panel.closed.connect(self._close_settings)
+        self.settings_panel.saved.connect(self._on_settings_saved)
+        self.settings_panel.setVisible(False)
+        root.addWidget(self.settings_panel)
+        self._settings_open = False
 
     # ── Edge-resize support (frameless) ──────────────────────────
     def _edge_at(self, pos: QPoint) -> str | None:
@@ -567,7 +831,8 @@ class LyricsWindow(QMainWindow):
         else:
             dominant = None
         if dominant:
-            grad = _gradient_from_rgb(*dominant)
+            sat = self.config.get("bg_saturation", 80)
+            grad = _gradient_from_rgb(*dominant, saturation_pct=sat)
             # Emit thread-safe signal → received on Qt main thread
             self._gradient_ready.emit(track_key, grad[0], grad[1], grad[2])
 
@@ -616,8 +881,8 @@ class LyricsWindow(QMainWindow):
             return
 
         for line in self.current_lyrics["lines"]:
-            text = line["words"].strip() or "\u266a"
-            lbl = WordWrapLabel(text)
+            text = line["words"].strip()
+            lbl = WordWrapLabel(text if text else " ")
             lbl.setStyleSheet(self._css_inactive())
             lbl.setAlignment(Qt.AlignLeft)
             self.lyrics_layout.addWidget(lbl)
@@ -675,6 +940,41 @@ class LyricsWindow(QMainWindow):
         """Pin = lock position. Always-on-top stays on."""
         pass  # drag is disabled inside TitleBar when pinned
 
+    # ── Settings ─────────────────────────────────────────────────
+    def _open_settings(self):
+        if self._settings_open:
+            self._close_settings()
+            return
+        self._settings_open = True
+        self.settings_panel.sync_from_config()
+        self.scroll_area.setVisible(False)
+        self.settings_panel.setVisible(True)
+        self.bg.set_dim(140)   # translucent dark overlay
+
+    def _close_settings(self):
+        self._settings_open = False
+        self.settings_panel.setVisible(False)
+        self.scroll_area.setVisible(True)
+        self.bg.set_dim(0)     # restore normal gradient
+
+    def _on_settings_saved(self):
+        """Apply config changes after save."""
+        self._refresh_styles()
+        # Apply updated line spacing
+        self.lyrics_layout.setSpacing(self.config.get("line_spacing", 3))
+        # Force gradient refresh with new saturation
+        self.current_track_key = None
+
+    def _refresh_styles(self):
+        """Re-apply CSS to all visible lyric labels after settings change."""
+        for i, lbl in enumerate(self.lyric_labels):
+            if i < self.current_line_index:
+                lbl.setStyleSheet(self._css_past())
+            elif i == self.current_line_index:
+                lbl.setStyleSheet(self._css_active())
+            else:
+                lbl.setStyleSheet(self._css_inactive())
+
     @staticmethod
     def _quit():
         QApplication.quit()
@@ -683,36 +983,42 @@ class LyricsWindow(QMainWindow):
     def _css_active(self) -> str:
         ff = self.config["font_family"]
         fs = self.config["font_size"]
+        sp = self.config.get("line_spacing", 3)
+        pad = max(2, sp + 2)
         return (
             f"color: rgba(255, 255, 255, 1.0);"
             f"font-family: {ff};"
             f"font-size: {fs}px;"
             "font-weight: bold;"
-            "padding: 6px 4px;"
+            f"padding: {pad}px 4px;"
             "background: transparent;"
         )
 
     def _css_past(self) -> str:
         ff = self.config["font_family"]
         fs = self.config["font_size"]
+        sp = self.config.get("line_spacing", 3)
+        pad = max(2, sp + 2)
         return (
-            f"color: rgba(255, 255, 255, 0.45);"
+            f"color: rgba(255, 255, 255, 0.55);"
             f"font-family: {ff};"
             f"font-size: {fs}px;"
             "font-weight: bold;"
-            "padding: 6px 4px;"
+            f"padding: {pad}px 4px;"
             "background: transparent;"
         )
 
     def _css_inactive(self) -> str:
         ff = self.config["font_family"]
         fs = self.config["font_size"]
+        sp = self.config.get("line_spacing", 3)
+        pad = max(2, sp + 2)
         return (
-            f"color: rgba(255, 255, 255, 0.25);"
+            f"color: rgba(255, 255, 255, 0.40);"
             f"font-family: {ff};"
             f"font-size: {fs}px;"
             "font-weight: bold;"
-            "padding: 6px 4px;"
+            f"padding: {pad}px 4px;"
             "background: transparent;"
         )
 
