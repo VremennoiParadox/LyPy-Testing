@@ -5,20 +5,21 @@ smooth scrolling, and edge-resize support for frameless windows.
 """
 
 import io
+import os
 import colorsys
 import ctypes
 from ctypes import wintypes
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QScrollArea, QPushButton, QApplication, QSizePolicy,
-    QSlider, QComboBox, QGroupBox, QFormLayout,
+    QSlider, QComboBox, QGroupBox, QFormLayout, QStyleFactory,
 )
 from PyQt5.QtCore import (
-    Qt, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal, QRect, QPoint,
+    Qt, QSize, QTimer, QPropertyAnimation, QEasingCurve, pyqtSignal, QRect, QPoint,
 )
 from PyQt5.QtGui import (
-    QColor, QPalette, QLinearGradient, QPainter, QBrush, QPainterPath, QCursor,
-    QFont, QFontDatabase, QDesktopServices,
+    QIcon, QPixmap, QColor, QPalette, QLinearGradient, QPainter,
+    QBrush, QPainterPath, QCursor, QFont, QFontDatabase, QDesktopServices,
 )
 from PyQt5.QtCore import QUrl
 
@@ -141,6 +142,9 @@ class TitleBar(QWidget):
     minimise_clicked = pyqtSignal()
     pin_toggled = pyqtSignal(bool)
     settings_clicked = pyqtSignal()
+    prev_clicked = pyqtSignal()
+    play_pause_clicked = pyqtSignal()
+    next_clicked = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -160,7 +164,11 @@ class TitleBar(QWidget):
             "font-weight: 600; background: transparent;"
         )
         layout.addWidget(self.title)
-        layout.addStretch()
+
+        # ── Inline progress bar (between title and buttons) ──
+        self.progress_bar = ProgressBar(self)
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar, 1)   # stretch=1 fills available space
 
         btn = """
             QPushButton {
@@ -170,20 +178,66 @@ class TitleBar(QWidget):
             }
             QPushButton:hover { background: rgba(255,255,255,0.12); color: #fff; }
         """
-
-        self.settings_btn = QPushButton("\u2699")   # gear icon
-        self.settings_btn.setFixedSize(24, 24)
-        self.settings_btn.setStyleSheet(btn)
-        self.settings_btn.setToolTip("Settings")
-        self.settings_btn.clicked.connect(self.settings_clicked.emit)
-        layout.addWidget(self.settings_btn)
-
+        # ── Pin button (moved before media controls) ──
         self.pin_btn = QPushButton("\ud83d\udccd")   # unpinned icon
         self.pin_btn.setFixedSize(24, 24)
         self.pin_btn.setStyleSheet(btn)
         self.pin_btn.setToolTip("Pin window (lock position)")
         self.pin_btn.clicked.connect(self._toggle_pin)
         layout.addWidget(self.pin_btn)
+
+        # ── Resolve asset directory (same folder as this file) ──
+        _here = os.path.dirname(os.path.abspath(__file__))
+        def _icon(name: str) -> QIcon:
+            path = os.path.join(_here, "assets", f"{name}.png")
+            pix = QPixmap(path)
+            return QIcon(pix)
+
+        _media_style = (
+            "QPushButton { background: transparent; border: none;"
+            "  color: rgba(255,255,255,0.75); font-size: 13px; }"
+            "QPushButton:hover   { background: transparent; color: #ffffff; }"
+            "QPushButton:pressed { background: transparent; color: rgba(255,255,255,0.45); }"
+        )
+
+        # ── Media controls ──
+        self._icon_play  = _icon("btn_play")
+        self._icon_pause = _icon("btn_pause")
+
+        self.prev_btn = QPushButton()
+        self.prev_btn.setIcon(_icon("btn_prev"))
+        self.prev_btn.setIconSize(QSize(18, 18))
+        self.prev_btn.setFixedSize(24, 24)
+        self.prev_btn.setStyleSheet(_media_style)
+        self.prev_btn.setToolTip("Previous")
+        self.prev_btn.clicked.connect(self.prev_clicked.emit)
+        layout.addWidget(self.prev_btn)
+
+        self.play_pause_btn = QPushButton()
+        self.play_pause_btn.setIcon(self._icon_pause)
+        self.play_pause_btn.setIconSize(QSize(18, 18))
+        self.play_pause_btn.setFixedSize(24, 24)
+        self.play_pause_btn.setStyleSheet(_media_style)
+        self.play_pause_btn.setToolTip("Play / Pause")
+        self.play_pause_btn.clicked.connect(self.play_pause_clicked.emit)
+        layout.addWidget(self.play_pause_btn)
+
+        self.next_btn = QPushButton()
+        self.next_btn.setIcon(_icon("btn_next"))
+        self.next_btn.setIconSize(QSize(18, 18))
+        self.next_btn.setFixedSize(24, 24)
+        self.next_btn.setStyleSheet(_media_style)
+        self.next_btn.setToolTip("Next")
+        self.next_btn.clicked.connect(self.next_clicked.emit)
+        layout.addWidget(self.next_btn)
+
+        # ── Settings button (moved after media controls) ──
+        self.settings_btn = QPushButton("\u2699")
+        self.settings_btn.setFixedSize(24, 24)
+        self.settings_btn.setStyleSheet(btn)
+        self.settings_btn.setToolTip("Settings")
+        self.settings_btn.clicked.connect(self.settings_clicked.emit)
+        layout.addWidget(self.settings_btn)
 
         self.min_btn = QPushButton("\u2500")
         self.min_btn.setFixedSize(24, 24)
@@ -201,10 +255,15 @@ class TitleBar(QWidget):
 
         # Collect all action buttons for show/hide on hover
         self._action_buttons = [
-            self.settings_btn, self.pin_btn, self.min_btn, self.close_btn
+            self.pin_btn, self.prev_btn, self.play_pause_btn,
+            self.next_btn, self.settings_btn, self.min_btn, self.close_btn,
         ]
-        # Start hidden
+        # Force Fusion style so Windows native renderer doesn't paint a black
+        # hover background that ignores our transparent stylesheet.
+        _fusion = QStyleFactory.create("Fusion")
         for b in self._action_buttons:
+            b.setStyle(_fusion)
+            b.setAttribute(Qt.WA_TranslucentBackground)
             b.setVisible(False)
 
         self.setStyleSheet("background: transparent;")
@@ -218,6 +277,15 @@ class TitleBar(QWidget):
             self.pin_btn.setText("\ud83d\udccd")
             self.pin_btn.setToolTip("Pin window (lock position)")
         self.pin_toggled.emit(self._pinned)
+
+    def set_playing(self, playing: bool):
+        """Swap the play/pause icon to reflect the current playback state."""
+        self.play_pause_btn.setIcon(
+            self._icon_pause if playing else self._icon_play
+        )
+
+    def set_progress(self, progress_ms: int, duration_ms: int):
+        self.progress_bar.set_progress(progress_ms, duration_ms)
 
     # ── Drag support (disabled when pinned) ──
     def mousePressEvent(self, event):
@@ -235,10 +303,12 @@ class TitleBar(QWidget):
     def _show_buttons(self):
         for b in self._action_buttons:
             b.setVisible(True)
+        self.progress_bar.setVisible(True)
 
     def _hide_buttons(self):
         for b in self._action_buttons:
             b.setVisible(False)
+        self.progress_bar.setVisible(False)
 
     def enterEvent(self, event):
         self._show_buttons()
@@ -247,6 +317,85 @@ class TitleBar(QWidget):
     def leaveEvent(self, event):
         self._hide_buttons()
         super().leaveEvent(event)
+
+
+# ─── Thin song-progress bar (title-bar overlay) ─────────────────────────
+
+class ProgressBar(QWidget):
+    """Inline progress bar drawn as a thin pill, vertically centred in the title bar."""
+
+    _BAR_H   = 3    # drawn height of the track in pixels
+    _PAD     = 6    # gap between time label and track edge
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress    = 0.0
+        self._progress_ms = 0
+        self._duration_ms = 0
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedHeight(20)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    @staticmethod
+    def _fmt(ms: int) -> str:
+        s   = ms // 1000
+        m, s = divmod(s, 60)
+        return f"{m}:{s:02d}"
+
+    def set_progress(self, progress_ms: int, duration_ms: int):
+        self._progress_ms = progress_ms
+        self._duration_ms = duration_ms
+        if duration_ms and duration_ms > 0:
+            self._progress = max(0.0, min(1.0, progress_ms / duration_ms))
+        else:
+            self._progress = 0.0
+        self.update()
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        font = p.font()
+        font.setPointSize(8)
+        font.setWeight(QFont.Medium)
+        p.setFont(font)
+        fm = p.fontMetrics()
+
+        left_txt  = self._fmt(self._progress_ms)
+        right_txt = self._fmt(self._duration_ms)
+
+        lw = fm.horizontalAdvance(left_txt)
+        rw = fm.horizontalAdvance(right_txt)
+
+        w  = self.width()
+        h  = self.height()
+        cy = h // 2
+
+        text_color = QColor(255, 255, 255, 160)
+        p.setPen(text_color)
+        # Use QRect + AlignVCenter so both labels are pixel-perfectly at the same height
+        p.drawText(QRect(0, 0, lw, h), Qt.AlignVCenter | Qt.AlignLeft, left_txt)
+        p.drawText(QRect(w - rw, 0, rw, h), Qt.AlignVCenter | Qt.AlignRight, right_txt)
+
+        # Track spans between the two labels
+        bh     = self._BAR_H
+        bar_x  = lw + self._PAD
+        bar_w  = w - lw - rw - self._PAD * 2
+        bar_y  = cy - bh // 2
+        r      = bh / 2
+
+        if bar_w > 0:
+            track = QPainterPath()
+            track.addRoundedRect(bar_x, bar_y, bar_w, bh, r, r)
+            p.fillPath(track, QBrush(QColor(255, 255, 255, 45)))
+
+            fill_w = int(bar_w * self._progress)
+            if fill_w > 0:
+                fill = QPainterPath()
+                fill.addRoundedRect(bar_x, bar_y, fill_w, bh, r, r)
+                p.fillPath(fill, QBrush(QColor(255, 255, 255, 200)))
+
+        p.end()
 
 
 # ─── Smooth-scrolling scroll area ───────────────────────────────────────
@@ -335,7 +484,7 @@ QWidget#settingRow QLabel {
     background: transparent;
 }
 QWidget#settingRow QLabel#valueLabel {
-    color: #1db954;
+    color: rgba(255,255,255,0.90);
     font-weight: 600;
     font-size: 13px;
     min-width: 36px;
@@ -348,7 +497,7 @@ QSlider::groove:horizontal {
     border-radius: 2px;
 }
 QSlider::handle:horizontal {
-    background: #1db954;
+    background: rgba(255,255,255,0.90);
     border: none;
     width: 12px;
     height: 12px;
@@ -356,21 +505,11 @@ QSlider::handle:horizontal {
     border-radius: 6px;
 }
 QSlider::sub-page:horizontal {
-    background: #1db954;
+    background: rgba(255,255,255,0.70);
     border-radius: 2px;
 }
 
 /* ── Buttons ── */
-QPushButton#saveBtn {
-    background: #1db954;
-    color: #000;
-    border: none;
-    border-radius: 20px;
-    padding: 10px 40px;
-    font-size: 14px;
-    font-weight: 700;
-}
-QPushButton#saveBtn:hover { background: #1ed760; }
 QPushButton#backBtn {
     background: transparent;
     color: rgba(255,255,255,0.65);
@@ -432,20 +571,26 @@ class SettingsPanel(QWidget):
         top_row.addStretch()
         root.addLayout(top_row)
 
+        root.addStretch(1)
+
         # ── TEXT section ──────────────────────────────────────────
         root.addWidget(self._section_title("TEXT"))
+        root.addSpacing(4)
         root.addWidget(self._slider_row(
             "Font size", 14, 48, config["font_size"], "px", "size"))
-        root.addSpacing(4)
+        root.addSpacing(8)
         root.addWidget(self._slider_row(
             "Line spacing", 0, 10, config.get("line_spacing", 3), "px", "spacing"))
 
+        root.addStretch(2)
+
         # ── BACKGROUND section ────────────────────────────────────
         root.addWidget(self._section_title("BACKGROUND"))
+        root.addSpacing(4)
         root.addWidget(self._slider_row(
             "Color saturation", 0, 100, config.get("bg_saturation", 80), "%", "sat"))
 
-        root.addSpacing(16)
+        root.addSpacing(12)
 
         # ── Action buttons ────────────────────────────────────────
         action_row = QHBoxLayout()
@@ -465,18 +610,7 @@ class SettingsPanel(QWidget):
 
         root.addLayout(action_row)
 
-        root.addStretch()
-
-        # ── Save button ──────────────────────────────────────────
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        self.save_btn = QPushButton("Save")
-        self.save_btn.setObjectName("saveBtn")
-        self.save_btn.setCursor(QCursor(Qt.PointingHandCursor))
-        self.save_btn.clicked.connect(self._on_save)
-        btn_row.addWidget(self.save_btn)
-        btn_row.addStretch()
-        root.addLayout(btn_row)
+        root.addStretch(1)
 
     # ── Helpers to build consistent setting rows ─────────────────
     def _section_title(self, text: str) -> QLabel:
@@ -489,6 +623,7 @@ class SettingsPanel(QWidget):
         """Build a styled row: label ... slider ... value."""
         row = QWidget()
         row.setObjectName("settingRow")
+        row.setMinimumHeight(54)
         h = QHBoxLayout(row)
         h.setContentsMargins(14, 10, 14, 10)
         h.setSpacing(12)
@@ -518,9 +653,7 @@ class SettingsPanel(QWidget):
             QUrl("https://github.com/YOUR_REPO/LyPy/issues"))
 
     def _on_back(self):
-        self.closed.emit()
-
-    def _on_save(self):
+        """Autosave then close."""
         self.config["font_size"] = self._size_slider.value()
         self.config["line_spacing"] = self._spacing_slider.value()
         self.config["bg_saturation"] = self._sat_slider.value()
@@ -644,6 +777,9 @@ class LyricsWindow(QMainWindow):
         self.title_bar.minimise_clicked.connect(self.showMinimized)
         self.title_bar.pin_toggled.connect(self._on_pin_toggled)
         self.title_bar.settings_clicked.connect(self._open_settings)
+        self.title_bar.prev_clicked.connect(self._media_prev)
+        self.title_bar.play_pause_clicked.connect(self._media_play_pause)
+        self.title_bar.next_clicked.connect(self._media_next)
         root.addWidget(self.title_bar)
 
         # Scrollable lyrics area
@@ -815,6 +951,12 @@ class LyricsWindow(QMainWindow):
         if self.current_lyrics and self.current_lyrics["synced"]:
             self._highlight_line(playback["progress_ms"])
 
+        self.title_bar.set_playing(playback.get("is_playing", True))
+        self.title_bar.set_progress(
+            playback.get("progress_ms", 0),
+            playback.get("duration_ms", 0),
+        )
+
     # ── Gradient ─────────────────────────────────────────────────
     def _set_gradient(self, colors: tuple[str, str, str]):
         self._gradient = colors
@@ -939,6 +1081,16 @@ class LyricsWindow(QMainWindow):
     def _on_pin_toggled(self, pinned: bool):
         """Pin = lock position. Always-on-top stays on."""
         pass  # drag is disabled inside TitleBar when pinned
+
+    # ── Media controls ───────────────────────────────────────────
+    def _media_prev(self):
+        self.media.skip_previous()
+
+    def _media_play_pause(self):
+        self.media.play_pause()
+
+    def _media_next(self):
+        self.media.skip_next()
 
     # ── Settings ─────────────────────────────────────────────────
     def _open_settings(self):

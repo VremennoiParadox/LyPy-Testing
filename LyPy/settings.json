@@ -6,8 +6,8 @@
   "frameless": true,
   "font_size": 28,
   "font_family": "Segoe UI, Circular, Helvetica, Arial, sans-serif",
-  "bg_saturation": 80,
-  "line_spacing": 3,
+  "bg_saturation": 100,
+  "line_spacing": 8,
   "polling_interval_ms": 50,
   "scroll_animation_ms": 400
 }

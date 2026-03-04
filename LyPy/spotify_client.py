@@ -157,6 +157,22 @@ class MediaSession:
             "source_app": source_app,
         }
 
+    # ── media control internals ───────────────────────────────────
+    async def _send_control(self, action: str) -> None:
+        manager = await self._ensure_manager()
+        session = manager.get_current_session()
+        if not session:
+            return
+        try:
+            if action == "play_pause":
+                await session.try_toggle_play_pause_async()
+            elif action == "next":
+                await session.try_skip_next_async()
+            elif action == "previous":
+                await session.try_skip_previous_async()
+        except Exception as e:
+            print(f"[MediaSession] Control '{action}' failed: {e}")
+
     # ── public (sync) API ────────────────────────────────────────
     def get_current_playback(self) -> dict | None:
         """
@@ -167,6 +183,27 @@ class MediaSession:
         except Exception as e:
             print(f"[MediaSession] Error: {e}")
             return None
+
+    def play_pause(self) -> None:
+        """Toggle play/pause on the current media session."""
+        try:
+            self._loop.run_until_complete(self._send_control("play_pause"))
+        except Exception as e:
+            print(f"[MediaSession] play_pause error: {e}")
+
+    def skip_next(self) -> None:
+        """Skip to next track."""
+        try:
+            self._loop.run_until_complete(self._send_control("next"))
+        except Exception as e:
+            print(f"[MediaSession] skip_next error: {e}")
+
+    def skip_previous(self) -> None:
+        """Skip to previous track."""
+        try:
+            self._loop.run_until_complete(self._send_control("previous"))
+        except Exception as e:
+            print(f"[MediaSession] skip_previous error: {e}")
 
     def fetch_thumbnail(self, track_key: str, callback) -> None:
         """
