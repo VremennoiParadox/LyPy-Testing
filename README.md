@@ -1,5 +1,7 @@
 # LyPy — Lyrics overlay
 
+> **Active development** for Linux and Windows cross-platform support. The Windows-only snapshot used for a future macOS port is maintained separately (see [REPOSITORY.md](REPOSITORY.md) when present, or the `LyPy-macOS` repo).
+
 A lightweight, always-on-top desktop widget that shows **time-synced lyrics** for whatever you are playing on Windows, in real time.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
