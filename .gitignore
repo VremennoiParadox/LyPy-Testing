@@ -1,0 +1,14 @@
+# PyInstaller (paths inside LyPy.spec are machine-specific — regenerate locally)
+LyPy.spec
+build/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local settings (dev copy under LyPy/)
+LyPy/settings.json
